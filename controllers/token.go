@@ -275,7 +275,8 @@ func (c *ApiController) GetOAuthToken() {
 	}
 
 	host := c.Ctx.Request.Host
-	token, err := object.GetOAuthToken(grantType, clientId, clientSecret, code, verifier, scope, nonce, username, password, host, refreshToken, tag, avatar, c.GetAcceptLanguage(), subjectToken, subjectTokenType, audience)
+	clientIp := util.GetClientIpFromRequest(c.Ctx.Request)
+	token, err := object.GetOAuthToken(grantType, clientId, clientSecret, code, verifier, scope, nonce, username, password, host, refreshToken, tag, avatar, c.GetAcceptLanguage(), subjectToken, subjectTokenType, audience, clientIp)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
