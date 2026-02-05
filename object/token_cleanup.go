@@ -22,45 +22,62 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-func CleanupTokens(tokenRetentionIntervalAfterExpiry int) error {
-	var sessions []*Token
-	err := ormer.Engine.Find(&sessions)
-	if err != nil {
-		return fmt.Errorf("failed to query expired tokens: %w", err)
-	}
+const (
+	tokenCleanupBatchSize = 1000
+)
 
+func CleanupTokens(tokenRetentionIntervalAfterExpiry int) error {
 	currentTime := time.Now()
 	deletedCount := 0
+	offset := 0
 
-	for _, session := range sessions {
-		tokenString := session.AccessToken
-		token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
+	for {
+		var sessions []*Token
+		err := ormer.Engine.Limit(tokenCleanupBatchSize, offset).Find(&sessions)
 		if err != nil {
-			fmt.Printf("Failed to parse token %s: %v\n", session.Name, err)
-			continue
+			return fmt.Errorf("failed to query tokens: %w", err)
 		}
 
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			exp, ok := claims["exp"].(float64)
-			if !ok {
-				fmt.Printf("Token %s does not have an 'exp' claim\n", session.Name)
+		if len(sessions) == 0 {
+			break
+		}
+
+		for _, session := range sessions {
+			tokenString := session.AccessToken
+			token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
+			if err != nil {
+				fmt.Printf("Failed to parse token %s: %v\n", session.Name, err)
 				continue
 			}
-			expireTime := time.Unix(int64(exp), 0)
-			tokenAfterExpiry := currentTime.Sub(expireTime).Seconds()
-			if tokenAfterExpiry > float64(tokenRetentionIntervalAfterExpiry) {
-				_, err = ormer.Engine.Delete(session)
-				if err != nil {
-					return fmt.Errorf("failed to delete expired token %s: %w", session.Name, err)
+
+			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				exp, ok := claims["exp"].(float64)
+				if !ok {
+					fmt.Printf("Token %s does not have an 'exp' claim\n", session.Name)
+					continue
 				}
-				fmt.Printf("[%d] Deleted expired token: %s | Created: %s | Org: %s | App: %s | User: %s\n",
-					deletedCount, session.Name, session.CreatedTime, session.Organization, session.Application, session.User)
-				deletedCount++
+				expireTime := time.Unix(int64(exp), 0)
+				tokenAfterExpiry := currentTime.Sub(expireTime).Seconds()
+				if tokenAfterExpiry > float64(tokenRetentionIntervalAfterExpiry) {
+					_, err = ormer.Engine.Delete(session)
+					if err != nil {
+						return fmt.Errorf("failed to delete expired token %s: %w", session.Name, err)
+					}
+					fmt.Printf("[%d] Deleted expired token: %s | Created: %s | Org: %s | App: %s | User: %s\n",
+						deletedCount, session.Name, session.CreatedTime, session.Organization, session.Application, session.User)
+					deletedCount++
+				}
+			} else {
+				fmt.Printf("Token %s is not valid\n", session.Name)
 			}
-		} else {
-			fmt.Printf("Token %s is not valid\n", session.Name)
 		}
+
+		if len(sessions) < tokenCleanupBatchSize {
+			break
+		}
+		offset += tokenCleanupBatchSize
 	}
+
 	return nil
 }
 
