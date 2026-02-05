@@ -78,6 +78,9 @@ type Provider struct {
 	ProviderUrl string `xorm:"varchar(200)" json:"providerUrl"`
 	EnableProxy bool   `json:"enableProxy"`
 	EnablePkce  bool   `json:"enablePkce"`
+	// InsecureSkipVerify controls whether TLS certificate verification is skipped
+	// for SMTP connections. Only used for SUBMAIL provider type.
+	InsecureSkipVerify bool `json:"insecureSkipVerify"`
 }
 
 func GetMaskedProvider(provider *Provider, isMaskEnabled bool) *Provider {
