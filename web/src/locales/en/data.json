@@ -976,6 +976,8 @@
     "Enable PKCE - Tooltip": "Enable PKCE (Proof Key for Code Exchange) for enhanced OAuth 2.0 security",
     "Enable proxy": "Enable proxy",
     "Enable proxy - Tooltip": "Enable socks5 Proxy when sending email or sms",
+    "Insecure Skip Verify": "Insecure Skip Verify",
+    "Insecure Skip Verify - Tooltip": "Skip TLS certificate verification (insecure, only use for SUBMAIL if necessary)",
     "Endpoint": "Endpoint",
     "Endpoint (Intranet)": "Endpoint (Intranet)",
     "Endpoint - Tooltip": "Service endpoint URL",

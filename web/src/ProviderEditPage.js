@@ -1290,6 +1290,18 @@ class ProviderEditPage extends React.Component {
                   </Col>
                 </Row>
               )}
+              {this.state.provider.type !== "SUBMAIL" ? null : (
+                <Row style={{marginTop: "20px"}} >
+                  <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
+                    {Setting.getLabel(i18next.t("provider:Insecure Skip Verify"), i18next.t("provider:Insecure Skip Verify - Tooltip"))} :
+                  </Col>
+                  <Col span={1} >
+                    <Switch checked={this.state.provider.insecureSkipVerify} onChange={checked => {
+                      this.updateProviderField("insecureSkipVerify", checked);
+                    }} />
+                  </Col>
+                </Row>
+              )}
               <Row style={{marginTop: "20px"}} >
                 <Col style={{marginTop: "5px"}} span={(Setting.isMobile()) ? 22 : 2}>
                   {Setting.getLabel(i18next.t("provider:Enable proxy"), i18next.t("provider:Enable proxy - Tooltip"))} :
