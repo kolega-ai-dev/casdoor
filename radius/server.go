@@ -65,7 +65,7 @@ func handleAccessRequest(w radius.ResponseWriter, r *radius.Request) {
 	password := rfc2865.UserPassword_GetString(r.Packet)
 	organization := rfc2865.Class_GetString(r.Packet)
 	state := rfc2865.State_GetString(r.Packet)
-	log.Printf("handleAccessRequest() username=%v, org=%v, password=%v", username, organization, password)
+	log.Printf("handleAccessRequest() username=%v, org=%v", username, organization)
 
 	if organization == "" {
 		organization = conf.GetConfigString("radiusDefaultOrganization")
