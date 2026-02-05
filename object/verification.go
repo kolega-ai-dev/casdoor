@@ -15,9 +15,10 @@
 package object
 
 import (
+	"crypto/rand"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/big"
 	"net/url"
 	"regexp"
 	"strings"
@@ -98,7 +99,10 @@ func SendVerificationCodeToEmail(organization *Organization, user *User, provide
 	sender := organization.DisplayName
 	title := provider.Title
 
-	code := getRandomCode(6)
+	code, err := getRandomCode(6)
+	if err != nil {
+		return err
+	}
 	// if organization.MasterVerificationCode != "" {
 	//	code = organization.MasterVerificationCode
 	// }
@@ -129,7 +133,7 @@ func SendVerificationCodeToEmail(organization *Organization, user *User, provide
 	}
 	content = strings.Replace(content, "%{user.friendlyName}", userString, 1)
 
-	err := IsAllowSend(user, remoteAddr, provider.Category, application)
+	err = IsAllowSend(user, remoteAddr, provider.Category, application)
 	if err != nil {
 		return err
 	}
@@ -153,7 +157,10 @@ func SendVerificationCodeToPhone(organization *Organization, user *User, provide
 		return err
 	}
 
-	code := getRandomCode(6)
+	code, err := getRandomCode(6)
+	if err != nil {
+		return err
+	}
 	// if organization.MasterVerificationCode != "" {
 	//	code = organization.MasterVerificationCode
 	// }
@@ -359,16 +366,16 @@ func GetVerifyType(username string) (verificationCodeType string) {
 	}
 }
 
-// From Casnode/object/validateCode.go line 116
-var stdNums = []byte("0123456789")
-
-func getRandomCode(length int) string {
-	var result []byte
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+func getRandomCode(length int) (string, error) {
+	result := make([]byte, length)
 	for i := 0; i < length; i++ {
-		result = append(result, stdNums[r.Intn(len(stdNums))])
+		n, err := rand.Int(rand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", err
+		}
+		result[i] = byte('0' + n.Int64())
 	}
-	return string(result)
+	return string(result), nil
 }
 
 func GetVerificationCount(owner, field, value string) (int64, error) {
