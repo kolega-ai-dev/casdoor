@@ -147,8 +147,11 @@ func (p *ActiveDirectorySyncerProvider) getLdapConn() (*goldap.Conn, error) {
 
 	// Check if SSL is enabled (port 636 typically indicates LDAPS)
 	if port == 636 {
+		// SslMode determines TLS certificate verification behavior
+		// - "disable": Skip certificate verification (not recommended for production)
+		// - "verify-full" or other values: Verify server certificate (secure default)
 		tlsConfig := &tls.Config{
-			InsecureSkipVerify: true, // TODO: Make this configurable
+			InsecureSkipVerify: p.Syncer.SslMode == "disable",
 		}
 		conn, err = goldap.DialTLS("tcp", fmt.Sprintf("%s:%d", host, port), tlsConfig)
 	} else {
