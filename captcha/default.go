@@ -14,7 +14,9 @@
 
 package captcha
 
-import "github.com/casdoor/casdoor/object"
+import (
+	"github.com/dchest/captcha"
+)
 
 type DefaultCaptchaProvider struct{}
 
@@ -23,6 +25,6 @@ func NewDefaultCaptchaProvider() *DefaultCaptchaProvider {
 	return captcha
 }
 
-func (captcha *DefaultCaptchaProvider) VerifyCaptcha(token, clientId, clientSecret, clientId2 string) (bool, error) {
-	return object.VerifyCaptcha(clientSecret, token), nil
+func (c *DefaultCaptchaProvider) VerifyCaptcha(token, clientId, clientSecret, clientId2 string) (bool, error) {
+	return captcha.VerifyString(clientSecret, token), nil
 }

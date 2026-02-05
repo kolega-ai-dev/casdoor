@@ -176,6 +176,8 @@ func (c *ApiController) GetOAuthToken() {
 	subjectToken := c.Ctx.Input.Query("subject_token")
 	subjectTokenType := c.Ctx.Input.Query("subject_token_type")
 	audience := c.Ctx.Input.Query("audience")
+	captchaType := c.Ctx.Input.Query("captcha_type")
+	captchaToken := c.Ctx.Input.Query("captcha_token")
 
 	if clientId == "" && clientSecret == "" {
 		clientId, clientSecret, _ = c.Ctx.Request.BasicAuth()
@@ -231,6 +233,12 @@ func (c *ApiController) GetOAuthToken() {
 			if audience == "" {
 				audience = tokenRequest.Audience
 			}
+			if captchaType == "" {
+				captchaType = tokenRequest.CaptchaType
+			}
+			if captchaToken == "" {
+				captchaToken = tokenRequest.CaptchaToken
+			}
 		}
 	}
 
@@ -275,7 +283,8 @@ func (c *ApiController) GetOAuthToken() {
 	}
 
 	host := c.Ctx.Request.Host
-	token, err := object.GetOAuthToken(grantType, clientId, clientSecret, code, verifier, scope, nonce, username, password, host, refreshToken, tag, avatar, c.GetAcceptLanguage(), subjectToken, subjectTokenType, audience)
+	clientIp := util.GetClientIpFromRequest(c.Ctx.Request)
+	token, err := object.GetOAuthToken(grantType, clientId, clientSecret, code, verifier, scope, nonce, username, password, host, refreshToken, tag, avatar, c.GetAcceptLanguage(), subjectToken, subjectTokenType, audience, clientIp, captchaType, captchaToken)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return

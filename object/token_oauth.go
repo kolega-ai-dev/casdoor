@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/casdoor/casdoor/captcha"
+	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/i18n"
 	"github.com/casdoor/casdoor/idp"
 	"github.com/casdoor/casdoor/util"
@@ -41,6 +43,59 @@ const (
 )
 
 var DeviceAuthMap = sync.Map{}
+
+// guestUserRateLimiter tracks guest user creation attempts per IP
+type guestUserRateLimiter struct {
+	attempts map[string]*guestUserAttempts
+	mu       sync.RWMutex
+}
+
+type guestUserAttempts struct {
+	count     int
+	resetTime time.Time
+}
+
+var guestUserLimiter = &guestUserRateLimiter{
+	attempts: make(map[string]*guestUserAttempts),
+}
+
+const (
+	// Max guest user creations per IP per hour
+	guestUserRateLimitCount   = 10
+	guestUserRateLimitWindow  = time.Hour
+	guestUserRateLimitMessage = "guest user creation rate limit exceeded, please try again later"
+)
+
+// checkRateLimit checks if the client IP has exceeded the guest user creation rate limit
+func (rl *guestUserRateLimiter) checkRateLimit(clientIp string) bool {
+	if clientIp == "" {
+		// If we can't determine the client IP, allow but log (fail open for usability, fail closed for security would deny)
+		// For security, we should deny if IP is unknown and rate limiting is critical
+		return false
+	}
+
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	attempt, exists := rl.attempts[clientIp]
+
+	if !exists || now.After(attempt.resetTime) {
+		// First attempt or window expired, create new entry
+		rl.attempts[clientIp] = &guestUserAttempts{
+			count:     1,
+			resetTime: now.Add(guestUserRateLimitWindow),
+		}
+		return true
+	}
+
+	if attempt.count >= guestUserRateLimitCount {
+		return false
+	}
+
+	attempt.count++
+	return true
+}
 
 type Code struct {
 	Message string `xorm:"varchar(100)" json:"message"`
@@ -210,7 +265,7 @@ func GetOAuthCode(userId string, clientId string, provider string, signinMethod 
 	}, nil
 }
 
-func GetOAuthToken(grantType string, clientId string, clientSecret string, code string, verifier string, scope string, nonce string, username string, password string, host string, refreshToken string, tag string, avatar string, lang string, subjectToken string, subjectTokenType string, audience string) (interface{}, error) {
+func GetOAuthToken(grantType string, clientId string, clientSecret string, code string, verifier string, scope string, nonce string, username string, password string, host string, refreshToken string, tag string, avatar string, lang string, subjectToken string, subjectTokenType string, audience string, clientIp string, captchaType string, captchaToken string) (interface{}, error) {
 	application, err := GetApplicationByClientId(clientId)
 	if err != nil {
 		return nil, err
@@ -236,7 +291,7 @@ func GetOAuthToken(grantType string, clientId string, clientSecret string, code 
 	var tokenError *TokenError
 	switch grantType {
 	case "authorization_code": // Authorization Code Grant
-		token, tokenError, err = GetAuthorizationCodeToken(application, clientSecret, code, verifier)
+		token, tokenError, err = GetAuthorizationCodeToken(application, clientSecret, code, verifier, clientIp, captchaType, captchaToken)
 	case "password": //	Resource Owner Password Credentials Grant
 		token, tokenError, err = GetPasswordToken(application, username, password, scope, host)
 	case "client_credentials": // Client Credentials Grant
@@ -457,13 +512,108 @@ func IsGrantTypeValid(method string, grantTypes []string) bool {
 }
 
 // createGuestUserToken creates a new guest user and returns a token for them
-func createGuestUserToken(application *Application, clientSecret string, verifier string) (*Token, *TokenError, error) {
+func createGuestUserToken(application *Application, clientSecret string, verifier string, clientIp string, captchaType string, captchaToken string) (*Token, *TokenError, error) {
 	// Verify client secret if provided
 	if clientSecret != "" && application.ClientSecret != clientSecret {
 		return nil, &TokenError{
 			Error:            InvalidClient,
 			ErrorDescription: "client_secret is invalid",
 		}, nil
+	}
+
+	// Check rate limit per IP
+	if !guestUserLimiter.checkRateLimit(clientIp) {
+		return nil, &TokenError{
+			Error:            InvalidRequest,
+			ErrorDescription: guestUserRateLimitMessage,
+		}, nil
+	}
+
+	// Check user quota
+	quota := conf.GetConfigQuota().User
+	if quota != -1 {
+		count, err := GetUserCount("", "", "", "")
+		if err != nil {
+			return nil, &TokenError{
+				Error:            EndpointError,
+				ErrorDescription: fmt.Sprintf("failed to check user quota: %s", err.Error()),
+			}, nil
+		}
+		if int(count) >= quota {
+			return nil, &TokenError{
+				Error:            InvalidRequest,
+				ErrorDescription: "user quota exceeded",
+			}, nil
+		}
+	}
+
+	// Check organization user quota
+	orgUserCount, err := GetUserCount(application.Organization, "", "", "")
+	if err != nil {
+		return nil, &TokenError{
+			Error:            EndpointError,
+			ErrorDescription: fmt.Sprintf("failed to get organization user count: %s", err.Error()),
+		}, nil
+	}
+
+	// Apply organization-level limit (configurable, default to reasonable limit if not set)
+	// This prevents a single organization from being flooded with guest users
+	const maxGuestUsersPerOrg = 10000
+	if orgUserCount >= maxGuestUsersPerOrg {
+		return nil, &TokenError{
+			Error:            InvalidRequest,
+			ErrorDescription: "organization user limit exceeded",
+		}, nil
+	}
+
+	// Verify captcha if application has captcha provider configured
+	hasCaptchaProvider := false
+	for _, providerItem := range application.Providers {
+		if providerItem.Provider != nil && providerItem.Provider.Category == "Captcha" {
+			if providerItem.Rule != "None" && providerItem.Rule != "" {
+				hasCaptchaProvider = true
+				break
+			}
+		}
+	}
+
+	if hasCaptchaProvider {
+		if captchaType == "" || captchaToken == "" {
+			return nil, &TokenError{
+				Error:            InvalidRequest,
+				ErrorDescription: "captcha verification required",
+			}, nil
+		}
+
+		captchaProvider, err := GetCaptchaProviderByApplication(util.GetId(application.Owner, application.Name), "false", "en")
+		if err != nil {
+			return nil, &TokenError{
+				Error:            EndpointError,
+				ErrorDescription: fmt.Sprintf("failed to get captcha provider: %s", err.Error()),
+			}, nil
+		}
+
+		if captchaProvider != nil {
+			clientSecretForCaptcha := captchaProvider.ClientSecret
+			if captchaProvider.Type == "Default" {
+				clientSecretForCaptcha = ""
+			}
+
+			isHuman, err := captcha.VerifyCaptchaByCaptchaType(captchaType, captchaToken, captchaProvider.ClientId, clientSecretForCaptcha, captchaProvider.ClientId2)
+			if err != nil {
+				return nil, &TokenError{
+					Error:            InvalidRequest,
+					ErrorDescription: fmt.Sprintf("captcha verification failed: %s", err.Error()),
+				}, nil
+			}
+
+			if !isHuman {
+				return nil, &TokenError{
+					Error:            InvalidRequest,
+					ErrorDescription: "captcha verification failed",
+				}, nil
+			}
+		}
 	}
 
 	// Generate a unique guest username
@@ -595,7 +745,7 @@ func generateGuestUsername() string {
 
 // GetAuthorizationCodeToken
 // Authorization code flow
-func GetAuthorizationCodeToken(application *Application, clientSecret string, code string, verifier string) (*Token, *TokenError, error) {
+func GetAuthorizationCodeToken(application *Application, clientSecret string, code string, verifier string, clientIp string, captchaType string, captchaToken string) (*Token, *TokenError, error) {
 	if code == "" {
 		return nil, &TokenError{
 			Error:            InvalidRequest,
@@ -605,7 +755,7 @@ func GetAuthorizationCodeToken(application *Application, clientSecret string, co
 
 	// Handle guest user creation
 	if code == "guest-user" {
-		return createGuestUserToken(application, clientSecret, verifier)
+		return createGuestUserToken(application, clientSecret, verifier, clientIp, captchaType, captchaToken)
 	}
 
 	token, err := getTokenByCode(code)

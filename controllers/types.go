@@ -30,4 +30,6 @@ type TokenRequest struct {
 	SubjectToken     string `json:"subject_token"`
 	SubjectTokenType string `json:"subject_token_type"`
 	Audience         string `json:"audience"`
+	CaptchaType      string `json:"captcha_type"`
+	CaptchaToken     string `json:"captcha_token"`
 }
