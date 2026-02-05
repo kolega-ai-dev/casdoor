@@ -210,7 +210,7 @@ func GetOAuthCode(userId string, clientId string, provider string, signinMethod 
 	}, nil
 }
 
-func GetOAuthToken(grantType string, clientId string, clientSecret string, code string, verifier string, scope string, nonce string, username string, password string, host string, refreshToken string, tag string, avatar string, lang string, subjectToken string, subjectTokenType string, audience string) (interface{}, error) {
+func GetOAuthToken(grantType string, clientId string, clientSecret string, code string, verifier string, scope string, nonce string, username string, password string, host string, refreshToken string, tag string, avatar string, lang string, subjectToken string, subjectTokenType string, audience string, clientIp string) (interface{}, error) {
 	application, err := GetApplicationByClientId(clientId)
 	if err != nil {
 		return nil, err
@@ -236,7 +236,7 @@ func GetOAuthToken(grantType string, clientId string, clientSecret string, code 
 	var tokenError *TokenError
 	switch grantType {
 	case "authorization_code": // Authorization Code Grant
-		token, tokenError, err = GetAuthorizationCodeToken(application, clientSecret, code, verifier)
+		token, tokenError, err = GetAuthorizationCodeToken(application, clientSecret, code, verifier, clientIp)
 	case "password": //	Resource Owner Password Credentials Grant
 		token, tokenError, err = GetPasswordToken(application, username, password, scope, host)
 	case "client_credentials": // Client Credentials Grant
@@ -456,14 +456,43 @@ func IsGrantTypeValid(method string, grantTypes []string) bool {
 	return false
 }
 
+// guestTokenRateLimiter tracks rate limit for guest user token creation per IP
+type guestTokenRequest struct {
+	count     int
+	firstSeen time.Time
+}
+
+var guestTokenRateLimiter sync.Map
+
 // createGuestUserToken creates a new guest user and returns a token for them
-func createGuestUserToken(application *Application, clientSecret string, verifier string) (*Token, *TokenError, error) {
+func createGuestUserToken(application *Application, clientSecret string, verifier string, clientIp string) (*Token, *TokenError, error) {
 	// Verify client secret if provided
 	if clientSecret != "" && application.ClientSecret != clientSecret {
 		return nil, &TokenError{
 			Error:            InvalidClient,
 			ErrorDescription: "client_secret is invalid",
 		}, nil
+	}
+
+	// Rate limiting: max 5 guest user creations per IP per hour
+	const maxGuestTokensPerHour = 5
+	now := time.Now()
+
+	if value, ok := guestTokenRateLimiter.Load(clientIp); ok {
+		req := value.(*guestTokenRequest)
+		if now.Sub(req.firstSeen) > time.Hour {
+			// Reset if more than an hour has passed
+			guestTokenRateLimiter.Store(clientIp, &guestTokenRequest{count: 1, firstSeen: now})
+		} else if req.count >= maxGuestTokensPerHour {
+			return nil, &TokenError{
+				Error:            InvalidRequest,
+				ErrorDescription: "rate limit exceeded for guest user creation",
+			}, nil
+		} else {
+			req.count++
+		}
+	} else {
+		guestTokenRateLimiter.Store(clientIp, &guestTokenRequest{count: 1, firstSeen: now})
 	}
 
 	// Generate a unique guest username
@@ -484,6 +513,21 @@ func createGuestUserToken(application *Application, clientSecret string, verifie
 		return nil, &TokenError{
 			Error:            InvalidClient,
 			ErrorDescription: fmt.Sprintf("organization: %s does not exist", application.Organization),
+		}, nil
+	}
+
+	// Check organization quota for guest users
+	guestUserCount, err := GetUserCount(application.Organization, "tag", "guest-user", "")
+	if err != nil {
+		return nil, &TokenError{
+			Error:            EndpointError,
+			ErrorDescription: fmt.Sprintf("failed to get guest user count: %s", err.Error()),
+		}, nil
+	}
+	if guestUserCount >= 1000 {
+		return nil, &TokenError{
+			Error:            InvalidRequest,
+			ErrorDescription: "guest user quota exceeded for this organization",
 		}, nil
 	}
 
@@ -595,7 +639,7 @@ func generateGuestUsername() string {
 
 // GetAuthorizationCodeToken
 // Authorization code flow
-func GetAuthorizationCodeToken(application *Application, clientSecret string, code string, verifier string) (*Token, *TokenError, error) {
+func GetAuthorizationCodeToken(application *Application, clientSecret string, code string, verifier string, clientIp string) (*Token, *TokenError, error) {
 	if code == "" {
 		return nil, &TokenError{
 			Error:            InvalidRequest,
@@ -605,7 +649,7 @@ func GetAuthorizationCodeToken(application *Application, clientSecret string, co
 
 	// Handle guest user creation
 	if code == "guest-user" {
-		return createGuestUserToken(application, clientSecret, verifier)
+		return createGuestUserToken(application, clientSecret, verifier, clientIp)
 	}
 
 	token, err := getTokenByCode(code)
