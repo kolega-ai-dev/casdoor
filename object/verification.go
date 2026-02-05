@@ -15,9 +15,10 @@
 package object
 
 import (
+	"crypto/rand"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/big"
 	"net/url"
 	"regexp"
 	"strings"
@@ -364,9 +365,9 @@ var stdNums = []byte("0123456789")
 
 func getRandomCode(length int) string {
 	var result []byte
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for i := 0; i < length; i++ {
-		result = append(result, stdNums[r.Intn(len(stdNums))])
+		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(stdNums))))
+		result = append(result, stdNums[n.Int64()])
 	}
 	return string(result)
 }
