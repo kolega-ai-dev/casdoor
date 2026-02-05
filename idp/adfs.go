@@ -30,12 +30,13 @@ import (
 )
 
 type AdfsIdProvider struct {
-	Client *http.Client
-	Config *oauth2.Config
-	Host   string
+	Client     *http.Client
+	Config     *oauth2.Config
+	Host       string
+	DisableSsl bool
 }
 
-func NewAdfsIdProvider(clientId string, clientSecret string, redirectUrl string, hostUrl string) *AdfsIdProvider {
+func NewAdfsIdProvider(clientId string, clientSecret string, redirectUrl string, hostUrl string, disableSsl bool) *AdfsIdProvider {
 	idp := &AdfsIdProvider{}
 
 	config := idp.getConfig(hostUrl)
@@ -44,17 +45,20 @@ func NewAdfsIdProvider(clientId string, clientSecret string, redirectUrl string,
 	config.RedirectURL = redirectUrl
 	idp.Config = config
 	idp.Host = hostUrl
+	idp.DisableSsl = disableSsl
 	return idp
 }
 
 func (idp *AdfsIdProvider) SetHttpClient(client *http.Client) {
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
-	}
 	idp.Client = client
-	idp.Client.Transport = tr
+	if idp.DisableSsl {
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		}
+		idp.Client.Transport = tr
+	}
 }
 
 func (idp *AdfsIdProvider) getConfig(hostUrl string) *oauth2.Config {
